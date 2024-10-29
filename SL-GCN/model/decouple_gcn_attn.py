@@ -51,6 +51,7 @@ class unit_tcn(nn.Module):
         self.dropT = DropBlockT_1d(block_size=block_size)
 
     def forward(self, x, keep_prob, A):
+        print(f"Forward in {self.__class__.__name__}, input shape: {x.shape}")
         x = self.bn(self.conv(x))
         x = self.dropT(self.dropS(x, keep_prob, A), keep_prob)
         return x
@@ -69,6 +70,7 @@ class unit_tcn_skip(nn.Module):
         bn_init(self.bn, 1)
 
     def forward(self, x):
+        print(f"Forward in {self.__class__.__name__}, input shape: {x.shape}")
         x = self.bn(self.conv(x))
         return x
 
@@ -104,19 +106,19 @@ class unit_gcn(nn.Module):
         bn_init(self.bn, 1e-6)
 
         self.Linear_weight = nn.Parameter(torch.zeros(
-            in_channels, out_channels * num_subset, requires_grad=True, device='cuda'), requires_grad=True)
+            in_channels, out_channels * num_subset, requires_grad=True, device='cpu'), requires_grad=True)
         nn.init.normal_(self.Linear_weight, 0, math.sqrt(
             0.5 / (out_channels * num_subset)))
-
+ 
         self.Linear_bias = nn.Parameter(torch.zeros(
-            1, out_channels * num_subset, 1, 1, requires_grad=True, device='cuda'), requires_grad=True)
+            1, out_channels * num_subset, 1, 1, requires_grad=True, device='cpu'), requires_grad=True)
         nn.init.constant(self.Linear_bias, 1e-6)
 
         eye_array = []
         for i in range(out_channels):
             eye_array.append(torch.eye(num_point))
         self.eyes = nn.Parameter(torch.tensor(torch.stack(
-            eye_array), requires_grad=False, device='cuda'), requires_grad=False)  # [c,25,25]
+            eye_array), requires_grad=False, device='cpu'), requires_grad=False)  # [c,25,25]
 
     def norm(self, A):
         b, c, h, w = A.size()
@@ -128,20 +130,26 @@ class unit_gcn(nn.Module):
         return A
 
     def forward(self, x0):
+        
+        print(f"Forward in {self.__class__.__name__}, input shape: {x0.shape}")
         learn_A = self.DecoupleA.repeat(
             1, self.out_channels // self.groups, 1, 1)
         norm_learn_A = torch.cat([self.norm(learn_A[0:1, ...]), self.norm(
             learn_A[1:2, ...]), self.norm(learn_A[2:3, ...])], 0)
 
+        print('first ensum')
         x = torch.einsum(
-            'nctw,cd->ndtw', (x0, self.Linear_weight)).contiguous()
+            'nctw,cd->ndtw', (x0, self.Linear_weight))#.contiguous()
         x = x + self.Linear_bias
+        print('bn')
         x = self.bn0(x)
 
         n, kc, t, v = x.size()
         x = x.view(n, self.num_subset, kc // self.num_subset, t, v)
+        print('second einsum')
         x = torch.einsum('nkctv,kcvw->nctw', (x, norm_learn_A))
 
+        print('final bn and downsample')
         x = self.bn(x)
         x += self.down(x0)
         x = self.relu(x)
@@ -158,7 +166,7 @@ class TCN_GCN_unit(nn.Module):
         self.relu = nn.ReLU()
 
         self.A = nn.Parameter(torch.tensor(np.sum(np.reshape(A.astype(np.float32), [
-                              3, num_point, num_point]), axis=0), dtype=torch.float32, requires_grad=False, device='cuda'), requires_grad=False)
+                              3, num_point, num_point]), axis=0), dtype=torch.float32, requires_grad=False, device='cpu'), requires_grad=False)
 
         if not residual:
             self.residual = lambda x: 0
@@ -195,6 +203,8 @@ class TCN_GCN_unit(nn.Module):
             nn.init.constant_(self.fc2c.bias, 0)
 
     def forward(self, x, keep_prob):
+        print(f"Forward in {self.__class__.__name__}, input shape: {x.shape}")
+        x = x.to('cpu')
         y = self.gcn1(x)
         if self.attention:
             # spatial attention
@@ -233,6 +243,7 @@ class Model(nn.Module):
 
         A = self.graph.A
         self.data_bn = nn.BatchNorm1d(num_person * in_channels * num_point)
+        self.val =  (num_person * in_channels * num_point)
 
         self.l1 = TCN_GCN_unit(in_channels, 64, A, groups, num_point,
                                block_size, residual=False)
@@ -253,8 +264,13 @@ class Model(nn.Module):
         bn_init(self.data_bn, 1)
 
     def forward(self, x, keep_prob=0.9):
+        print(f"Forward in {self.__class__.__name__}, input shape: {x.shape}")
+        
         N, C, T, V, M = x.size()
         x = x.permute(0, 4, 3, 1, 2).contiguous().view(N, M * V * C, T)
+        print(x.shape)
+        x = x.to('cpu')
+       
         x = self.data_bn(x)
         x = x.view(N, M, V, C, T).permute(
             0, 1, 3, 4, 2).contiguous().view(N * M, C, T, V)

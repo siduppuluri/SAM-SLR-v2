@@ -51,6 +51,7 @@ class unit_tcn(nn.Module):
         self.dropT = DropBlockT_1d(block_size=block_size)
 
     def forward(self, x, keep_prob, A):
+        print(f"Forward in {self.__class__.__name__}, input shape: {x.shape}")
         x = self.bn(self.conv(x))
         x = self.dropT(self.dropS(x, keep_prob, A), keep_prob)
         return x
@@ -69,6 +70,7 @@ class unit_tcn_skip(nn.Module):
         bn_init(self.bn, 1)
 
     def forward(self, x):
+        print(f"Forward in {self.__class__.__name__}, input shape: {x.shape}")
         x = self.bn(self.conv(x))
         return x
 
@@ -128,6 +130,7 @@ class unit_gcn(nn.Module):
         return A
 
     def forward(self, x0):
+        print(f"Forward in {self.__class__.__name__}, input shape: {x.shape}")
         learn_A = self.DecoupleA.repeat(
             1, self.out_channels // self.groups, 1, 1)
         norm_learn_A = torch.cat([self.norm(learn_A[0:1, ...]), self.norm(
@@ -195,6 +198,7 @@ class TCN_GCN_unit(nn.Module):
             nn.init.constant_(self.fc2c.bias, 0)
 
     def forward(self, x, keep_prob):
+        print(f"Forward in {self.__class__.__name__}, input shape: {x.shape}")
         y = self.gcn1(x)
         if self.attention:
             # spatial attention
@@ -248,17 +252,12 @@ class Model(nn.Module):
         self.l9 = TCN_GCN_unit(256, 256, A, groups, num_point, block_size)
         self.l10 = TCN_GCN_unit(256, 256, A, groups, num_point, block_size)
 
-        # temporal attention
-        self.sigmoid = nn.Sigmoid()
-        self.conv_ta = nn.Conv1d(256, 1, 9, padding=4)
-        nn.init.constant_(self.conv_ta.weight, 0)
-        nn.init.constant_(self.conv_ta.bias, 0)
-
         self.fc = nn.Linear(256, num_class)
         nn.init.normal(self.fc.weight, 0, math.sqrt(2. / num_class))
         bn_init(self.data_bn, 1)
 
     def forward(self, x, keep_prob=0.9):
+        print(f"Forward in {self.__class__.__name__}, input shape: {x.shape}")
         N, C, T, V, M = x.size()
         x = x.permute(0, 4, 3, 1, 2).contiguous().view(N, M * V * C, T)
         x = self.data_bn(x)
@@ -278,12 +277,6 @@ class Model(nn.Module):
 
         # N*M,C,T,V
         c_new = x.size(1)
-
-        # temporal attention
-        se = x.mean(-1)
-        se1 = self.sigmoid(self.conv_ta(se))
-        x = x * se1.unsqueeze(-1) + x
-
 
         # print(x.size())
         # print(N, M, c_new)
